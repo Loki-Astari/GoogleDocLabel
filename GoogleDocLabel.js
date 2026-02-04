@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Google Docs Labels
 // @namespace    ThorsAnvil
-// @version      1.3
+// @version      1.4
 // @description  Adds a Labels section to Google Docs left sidebar
 // @author       You
 // @match        https://docs.google.com/document/*
@@ -15,6 +15,42 @@
     let labelsListContainer = null;
     let noLabelsMessage = null;
     let draggedIndex = null;
+    let documentId = null;
+
+    // Extract document ID from URL
+    function getDocumentId() {
+        const match = window.location.pathname.match(/\/document\/d\/([a-zA-Z0-9_-]+)/);
+        return match ? match[1] : null;
+    }
+
+    // Storage key for this document
+    function getStorageKey() {
+        return 'gd-labels-' + documentId;
+    }
+
+    // Save labels to localStorage
+    function saveLabels() {
+        if (!documentId) return;
+        try {
+            localStorage.setItem(getStorageKey(), JSON.stringify(labels));
+        } catch (e) {
+            console.log('Google Docs Labels: Could not save labels', e);
+        }
+    }
+
+    // Load labels from localStorage
+    function loadLabels() {
+        if (!documentId) return;
+        try {
+            const saved = localStorage.getItem(getStorageKey());
+            if (saved) {
+                labels = JSON.parse(saved);
+            }
+        } catch (e) {
+            console.log('Google Docs Labels: Could not load labels', e);
+            labels = [];
+        }
+    }
 
     function updateLabelsDisplay() {
         if (!labelsListContainer || !noLabelsMessage) return;
@@ -81,6 +117,7 @@
                         const draggedLabel = labels[draggedIndex];
                         labels.splice(draggedIndex, 1);
                         labels.splice(targetIndex, 0, draggedLabel);
+                        saveLabels();
                         updateLabelsDisplay();
                     }
                 });
@@ -122,12 +159,14 @@
     function addLabel(labelText) {
         if (labelText && labelText.trim()) {
             labels.push(labelText.trim());
+            saveLabels();
             updateLabelsDisplay();
         }
     }
 
     function removeLabel(index) {
         labels.splice(index, 1);
+        saveLabels();
         updateLabelsDisplay();
     }
 
@@ -265,13 +304,21 @@
         // Insert before Document tabs
         parentContainer.insertBefore(labelsSection, documentTabsSection);
 
-        // Initial display update
+        // Load saved labels and display
+        loadLabels();
         updateLabelsDisplay();
 
         console.log('Google Docs Labels: Labels section added successfully');
     }
 
     function init() {
+        // Get document ID first
+        documentId = getDocumentId();
+        if (!documentId) {
+            console.log('Google Docs Labels: Could not determine document ID');
+            return;
+        }
+
         const observer = new MutationObserver((mutations, obs) => {
             const walker = document.createTreeWalker(
                 document.body,
