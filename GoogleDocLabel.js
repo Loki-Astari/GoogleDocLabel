@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Google Docs Labels
 // @namespace    ThorsAnvil
-// @version      1.4
+// @version      1.5
 // @description  Adds a Labels section to Google Docs left sidebar
 // @author       You
 // @match        https://docs.google.com/document/*
@@ -16,6 +16,8 @@
     let noLabelsMessage = null;
     let draggedIndex = null;
     let documentId = null;
+    let documentTitle = null;
+    let expandedLabels = {}; // Track which labels are expanded
 
     // Extract document ID from URL
     function getDocumentId() {
@@ -23,16 +25,35 @@
         return match ? match[1] : null;
     }
 
+    // Get document title from page
+    function getDocumentTitle() {
+        // Try various selectors for the document title
+        const titleElement = document.querySelector('.docs-title-input') ||
+                            document.querySelector('[data-tooltip="Rename"]') ||
+                            document.querySelector('.docs-title-widget');
+        if (titleElement) {
+            return titleElement.value || titleElement.textContent || 'Untitled';
+        }
+        // Fallback to page title
+        const pageTitle = document.title.replace(' - Google Docs', '').trim();
+        return pageTitle || 'Untitled';
+    }
+
     // Storage key for this document
     function getStorageKey() {
         return 'gd-labels-' + documentId;
     }
 
-    // Save labels to localStorage
+    // Save labels to localStorage (with document title)
     function saveLabels() {
         if (!documentId) return;
         try {
-            localStorage.setItem(getStorageKey(), JSON.stringify(labels));
+            const data = {
+                labels: labels,
+                title: getDocumentTitle(),
+                url: window.location.href
+            };
+            localStorage.setItem(getStorageKey(), JSON.stringify(data));
         } catch (e) {
             console.log('Google Docs Labels: Could not save labels', e);
         }
@@ -44,12 +65,61 @@
         try {
             const saved = localStorage.getItem(getStorageKey());
             if (saved) {
-                labels = JSON.parse(saved);
+                const data = JSON.parse(saved);
+                // Handle both old format (array) and new format (object)
+                if (Array.isArray(data)) {
+                    labels = data;
+                } else {
+                    labels = data.labels || [];
+                }
             }
         } catch (e) {
             console.log('Google Docs Labels: Could not load labels', e);
             labels = [];
         }
+    }
+
+    // Find all documents with a specific label
+    function findDocumentsWithLabel(labelName) {
+        const documents = [];
+        const currentDocId = documentId;
+
+        for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (key && key.startsWith('gd-labels-')) {
+                try {
+                    const docId = key.replace('gd-labels-', '');
+                    const saved = localStorage.getItem(key);
+                    const data = JSON.parse(saved);
+                    
+                    let docLabels = [];
+                    let docTitle = 'Untitled';
+                    let docUrl = 'https://docs.google.com/document/d/' + docId + '/edit';
+
+                    // Handle both old format (array) and new format (object)
+                    if (Array.isArray(data)) {
+                        docLabels = data;
+                    } else {
+                        docLabels = data.labels || [];
+                        docTitle = data.title || 'Untitled';
+                        docUrl = data.url || docUrl;
+                    }
+
+                    if (docLabels.includes(labelName)) {
+                        documents.push({
+                            id: docId,
+                            title: docTitle,
+                            url: docUrl,
+                            isCurrent: docId === currentDocId
+                        });
+                    }
+                } catch (e) {
+                    // Skip invalid entries
+                }
+            }
+        }
+
+        return documents;
     }
 
     function updateLabelsDisplay() {
@@ -65,6 +135,9 @@
         } else {
             noLabelsMessage.style.display = 'none';
             labels.forEach((label, index) => {
+                const labelContainer = document.createElement('div');
+                labelContainer.className = 'gd-label-container';
+
                 const labelItem = document.createElement('div');
                 labelItem.style.cssText = 'padding: 4px 16px; color: #202124; font-size: 13px; cursor: grab; display: flex; align-items: center; justify-content: space-between; border-radius: 4px; transition: background-color 0.15s;';
                 labelItem.draggable = true;
@@ -130,6 +203,15 @@
                     labelItem.style.backgroundColor = 'transparent';
                 });
 
+                // Expand/Collapse button
+                const isExpanded = expandedLabels[label] || false;
+                const expandBtn = document.createElement('span');
+                expandBtn.className = 'gd-label-expand';
+                expandBtn.style.cssText = 'color: #5f6368; cursor: pointer; margin-right: 8px; font-size: 10px; user-select: none; transition: transform 0.2s;';
+                expandBtn.textContent = '▶';
+                expandBtn.style.display = 'inline-block';
+                expandBtn.style.transform = isExpanded ? 'rotate(90deg)' : 'rotate(0deg)';
+
                 const dragHandle = document.createElement('span');
                 dragHandle.style.cssText = 'color: #9aa0a6; margin-right: 8px; cursor: grab; font-size: 10px;';
                 dragHandle.textContent = '⋮⋮';
@@ -148,10 +230,94 @@
                     removeLabel(index);
                 });
 
+                labelItem.appendChild(expandBtn);
                 labelItem.appendChild(dragHandle);
                 labelItem.appendChild(labelText);
                 labelItem.appendChild(removeBtn);
-                labelsListContainer.appendChild(labelItem);
+                labelContainer.appendChild(labelItem);
+
+                // Document list container (for expanded state)
+                const docListContainer = document.createElement('div');
+                docListContainer.className = 'gd-doc-list';
+                docListContainer.style.cssText = 'padding-left: 32px; display: ' + (isExpanded ? 'block' : 'none') + ';';
+                labelContainer.appendChild(docListContainer);
+
+                // If expanded, populate the document list
+                if (isExpanded) {
+                    populateDocumentList(docListContainer, label);
+                }
+
+                // Expand/collapse click handler
+                expandBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    expandedLabels[label] = !expandedLabels[label];
+                    const nowExpanded = expandedLabels[label];
+                    
+                    expandBtn.style.transform = nowExpanded ? 'rotate(90deg)' : 'rotate(0deg)';
+                    docListContainer.style.display = nowExpanded ? 'block' : 'none';
+                    
+                    if (nowExpanded) {
+                        populateDocumentList(docListContainer, label);
+                    } else {
+                        // Clear the list when collapsed
+                        while (docListContainer.firstChild) {
+                            docListContainer.removeChild(docListContainer.firstChild);
+                        }
+                    }
+                });
+
+                labelsListContainer.appendChild(labelContainer);
+            });
+        }
+    }
+
+    function populateDocumentList(container, labelName) {
+        // Clear existing content
+        while (container.firstChild) {
+            container.removeChild(container.firstChild);
+        }
+
+        const documents = findDocumentsWithLabel(labelName);
+
+        if (documents.length === 0) {
+            const emptyMsg = document.createElement('div');
+            emptyMsg.style.cssText = 'padding: 4px 8px; color: #5f6368; font-size: 12px; font-style: italic;';
+            emptyMsg.textContent = 'No documents';
+            container.appendChild(emptyMsg);
+        } else {
+            documents.forEach(doc => {
+                const docItem = document.createElement('div');
+                docItem.style.cssText = 'padding: 4px 8px; font-size: 12px; border-radius: 4px; transition: background-color 0.15s;';
+
+                if (doc.isCurrent) {
+                    // Current document - show as text, not link
+                    docItem.style.color = '#1a73e8';
+                    docItem.style.fontWeight = '500';
+                    docItem.textContent = doc.title + ' (current)';
+                } else {
+                    // Other documents - show as link
+                    const link = document.createElement('a');
+                    link.href = doc.url;
+                    link.textContent = doc.title;
+                    link.style.cssText = 'color: #202124; text-decoration: none;';
+                    link.addEventListener('mouseenter', () => {
+                        link.style.textDecoration = 'underline';
+                    });
+                    link.addEventListener('mouseleave', () => {
+                        link.style.textDecoration = 'none';
+                    });
+                    docItem.appendChild(link);
+                }
+
+                // Hover effect
+                docItem.addEventListener('mouseenter', () => {
+                    docItem.style.backgroundColor = '#f1f3f4';
+                });
+                docItem.addEventListener('mouseleave', () => {
+                    docItem.style.backgroundColor = 'transparent';
+                });
+
+                container.appendChild(docItem);
             });
         }
     }
@@ -307,6 +473,12 @@
         // Load saved labels and display
         loadLabels();
         updateLabelsDisplay();
+
+        // Update document title in storage periodically (in case it changes)
+        setTimeout(() => {
+            documentTitle = getDocumentTitle();
+            saveLabels();
+        }, 2000);
 
         console.log('Google Docs Labels: Labels section added successfully');
     }
