@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Google Docs Labels
 // @namespace    ThorsAnvil
-// @version      1.5
+// @version      1.6
 // @description  Adds a Labels section to Google Docs left sidebar
 // @author       You
 // @match        https://docs.google.com/document/*
@@ -25,6 +25,12 @@
         return match ? match[1] : null;
     }
 
+    // Extract document ID from any Google Docs URL
+    function getDocumentIdFromUrl(url) {
+        const match = url.match(/\/document\/d\/([a-zA-Z0-9_-]+)/);
+        return match ? match[1] : null;
+    }
+
     // Get document title from page
     function getDocumentTitle() {
         // Try various selectors for the document title
@@ -40,8 +46,8 @@
     }
 
     // Storage key for this document
-    function getStorageKey() {
-        return 'gd-labels-' + documentId;
+    function getStorageKey(docId) {
+        return 'gd-labels-' + (docId || documentId);
     }
 
     // Save labels to localStorage (with document title)
@@ -120,6 +126,229 @@
         }
 
         return documents;
+    }
+
+    // Export label to JSON
+    function exportLabel(labelName) {
+        const documents = findDocumentsWithLabel(labelName);
+        const exportData = {
+            label: labelName,
+            documents: documents.map(doc => ({
+                title: doc.title,
+                url: doc.url
+            }))
+        };
+        return JSON.stringify(exportData, null, 2);
+    }
+
+    // Import label from JSON
+    function importLabel(jsonString) {
+        try {
+            const importData = JSON.parse(jsonString);
+            
+            if (!importData.label || !Array.isArray(importData.documents)) {
+                return { success: false, message: 'Invalid JSON format. Expected { label, documents }' };
+            }
+
+            const labelName = importData.label;
+            let importedCount = 0;
+
+            importData.documents.forEach(doc => {
+                if (!doc.url) return;
+
+                const docId = getDocumentIdFromUrl(doc.url);
+                if (!docId) return;
+
+                const storageKey = getStorageKey(docId);
+                let existingData = { labels: [], title: doc.title || 'Untitled', url: doc.url };
+
+                try {
+                    const saved = localStorage.getItem(storageKey);
+                    if (saved) {
+                        const data = JSON.parse(saved);
+                        if (Array.isArray(data)) {
+                            existingData.labels = data;
+                        } else {
+                            existingData = data;
+                            existingData.labels = existingData.labels || [];
+                        }
+                    }
+                } catch (e) {
+                    // Use default existingData
+                }
+
+                // Add label if not already present
+                if (!existingData.labels.includes(labelName)) {
+                    existingData.labels.push(labelName);
+                    localStorage.setItem(storageKey, JSON.stringify(existingData));
+                    importedCount++;
+                }
+            });
+
+            // Reload current document's labels if it was affected
+            loadLabels();
+            updateLabelsDisplay();
+
+            return { 
+                success: true, 
+                message: `Imported label "${labelName}" to ${importedCount} document(s).` 
+            };
+        } catch (e) {
+            return { success: false, message: 'Invalid JSON: ' + e.message };
+        }
+    }
+
+    // Show export dialog
+    function showExportDialog(labelName) {
+        const existingDialog = document.querySelector('#gd-label-dialog-overlay');
+        if (existingDialog) existingDialog.remove();
+
+        const jsonData = exportLabel(labelName);
+
+        const overlay = document.createElement('div');
+        overlay.id = 'gd-label-dialog-overlay';
+        overlay.style.cssText = 'position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.4); z-index: 10000; display: flex; align-items: center; justify-content: center;';
+
+        const dialog = document.createElement('div');
+        dialog.style.cssText = 'background: white; border-radius: 8px; padding: 24px; min-width: 400px; max-width: 500px; box-shadow: 0 4px 20px rgba(0,0,0,0.3);';
+
+        const title = document.createElement('div');
+        title.style.cssText = 'font-size: 16px; font-weight: 500; color: #202124; margin-bottom: 16px;';
+        title.textContent = 'Export Label: ' + labelName;
+
+        const textArea = document.createElement('textarea');
+        textArea.id = 'gd-export-text';
+        textArea.value = jsonData;
+        textArea.readOnly = true;
+        textArea.style.cssText = 'width: 100%; height: 200px; padding: 10px 12px; border: 1px solid #dadce0; border-radius: 4px; font-size: 12px; font-family: monospace; box-sizing: border-box; resize: vertical;';
+
+        const instructions = document.createElement('div');
+        instructions.style.cssText = 'margin-top: 12px; padding: 12px; background: #f8f9fa; border-radius: 4px; font-size: 13px; color: #5f6368;';
+        instructions.textContent = 'Copy the text above and send it to another user. They can import this label using the import button (↓) next to the Labels header.';
+
+        const buttonContainer = document.createElement('div');
+        buttonContainer.style.cssText = 'display: flex; justify-content: flex-end; gap: 12px; margin-top: 20px;';
+
+        const copyBtn = document.createElement('button');
+        copyBtn.textContent = 'Copy to Clipboard';
+        copyBtn.style.cssText = 'padding: 8px 16px; border: none; background: transparent; color: #1a73e8; font-size: 14px; font-weight: 500; cursor: pointer; border-radius: 4px;';
+
+        const okBtn = document.createElement('button');
+        okBtn.textContent = 'OK';
+        okBtn.style.cssText = 'padding: 8px 16px; border: none; background: #1a73e8; color: white; font-size: 14px; font-weight: 500; cursor: pointer; border-radius: 4px;';
+
+        buttonContainer.appendChild(copyBtn);
+        buttonContainer.appendChild(okBtn);
+        dialog.appendChild(title);
+        dialog.appendChild(textArea);
+        dialog.appendChild(instructions);
+        dialog.appendChild(buttonContainer);
+        overlay.appendChild(dialog);
+        document.body.appendChild(overlay);
+
+        // Select text for easy copying
+        textArea.select();
+
+        const closeDialog = () => overlay.remove();
+
+        copyBtn.addEventListener('click', () => {
+            textArea.select();
+            navigator.clipboard.writeText(jsonData).then(() => {
+                copyBtn.textContent = 'Copied!';
+                setTimeout(() => {
+                    copyBtn.textContent = 'Copy to Clipboard';
+                }, 2000);
+            }).catch(() => {
+                // Fallback
+                document.execCommand('copy');
+                copyBtn.textContent = 'Copied!';
+                setTimeout(() => {
+                    copyBtn.textContent = 'Copy to Clipboard';
+                }, 2000);
+            });
+        });
+
+        okBtn.addEventListener('click', closeDialog);
+
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) closeDialog();
+        });
+    }
+
+    // Show import dialog
+    function showImportDialog() {
+        const existingDialog = document.querySelector('#gd-label-dialog-overlay');
+        if (existingDialog) existingDialog.remove();
+
+        const overlay = document.createElement('div');
+        overlay.id = 'gd-label-dialog-overlay';
+        overlay.style.cssText = 'position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.4); z-index: 10000; display: flex; align-items: center; justify-content: center;';
+
+        const dialog = document.createElement('div');
+        dialog.style.cssText = 'background: white; border-radius: 8px; padding: 24px; min-width: 400px; max-width: 500px; box-shadow: 0 4px 20px rgba(0,0,0,0.3);';
+
+        const title = document.createElement('div');
+        title.style.cssText = 'font-size: 16px; font-weight: 500; color: #202124; margin-bottom: 16px;';
+        title.textContent = 'Import Label';
+
+        const textArea = document.createElement('textarea');
+        textArea.id = 'gd-import-text';
+        textArea.placeholder = 'Paste the exported JSON here...';
+        textArea.style.cssText = 'width: 100%; height: 200px; padding: 10px 12px; border: 1px solid #dadce0; border-radius: 4px; font-size: 12px; font-family: monospace; box-sizing: border-box; resize: vertical;';
+
+        const statusMsg = document.createElement('div');
+        statusMsg.id = 'gd-import-status';
+        statusMsg.style.cssText = 'margin-top: 12px; padding: 12px; border-radius: 4px; font-size: 13px; display: none;';
+
+        const instructions = document.createElement('div');
+        instructions.style.cssText = 'margin-top: 12px; padding: 12px; background: #f8f9fa; border-radius: 4px; font-size: 13px; color: #5f6368;';
+        instructions.textContent = 'Paste the JSON that was exported by another user. This will add the label to the documents in your localStorage.';
+
+        const buttonContainer = document.createElement('div');
+        buttonContainer.style.cssText = 'display: flex; justify-content: flex-end; gap: 12px; margin-top: 20px;';
+
+        const cancelBtn = document.createElement('button');
+        cancelBtn.textContent = 'Cancel';
+        cancelBtn.style.cssText = 'padding: 8px 16px; border: none; background: transparent; color: #1a73e8; font-size: 14px; font-weight: 500; cursor: pointer; border-radius: 4px;';
+
+        const importBtn = document.createElement('button');
+        importBtn.textContent = 'Import';
+        importBtn.style.cssText = 'padding: 8px 16px; border: none; background: #1a73e8; color: white; font-size: 14px; font-weight: 500; cursor: pointer; border-radius: 4px;';
+
+        buttonContainer.appendChild(cancelBtn);
+        buttonContainer.appendChild(importBtn);
+        dialog.appendChild(title);
+        dialog.appendChild(textArea);
+        dialog.appendChild(statusMsg);
+        dialog.appendChild(instructions);
+        dialog.appendChild(buttonContainer);
+        overlay.appendChild(dialog);
+        document.body.appendChild(overlay);
+
+        textArea.focus();
+
+        const closeDialog = () => overlay.remove();
+
+        cancelBtn.addEventListener('click', closeDialog);
+
+        importBtn.addEventListener('click', () => {
+            const result = importLabel(textArea.value);
+            statusMsg.style.display = 'block';
+            if (result.success) {
+                statusMsg.style.background = '#e6f4ea';
+                statusMsg.style.color = '#137333';
+                statusMsg.textContent = result.message;
+                setTimeout(closeDialog, 2000);
+            } else {
+                statusMsg.style.background = '#fce8e6';
+                statusMsg.style.color = '#c5221f';
+                statusMsg.textContent = result.message;
+            }
+        });
+
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) closeDialog();
+        });
     }
 
     function updateLabelsDisplay() {
@@ -220,6 +449,17 @@
                 labelText.style.cssText = 'flex: 1;';
                 labelText.textContent = label;
 
+                // Export button
+                const exportBtn = document.createElement('span');
+                exportBtn.className = 'gd-label-export';
+                exportBtn.style.cssText = 'color: #5f6368; cursor: pointer; padding: 2px 6px; font-size: 11px;';
+                exportBtn.textContent = '↑';
+                exportBtn.title = 'Export label';
+                exportBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    showExportDialog(label);
+                });
+
                 const removeBtn = document.createElement('span');
                 removeBtn.className = 'gd-label-remove';
                 removeBtn.dataset.index = index;
@@ -233,6 +473,7 @@
                 labelItem.appendChild(expandBtn);
                 labelItem.appendChild(dragHandle);
                 labelItem.appendChild(labelText);
+                labelItem.appendChild(exportBtn);
                 labelItem.appendChild(removeBtn);
                 labelContainer.appendChild(labelItem);
 
@@ -437,7 +678,7 @@
             padding: ${computedStyle.padding};
         `;
 
-        // Create header row with "Labels" text and plus button
+        // Create header row with "Labels" text and buttons
         const headerRow = document.createElement('div');
         headerRow.style.cssText = 'display: flex; align-items: center; justify-content: space-between; padding: 8px 16px;';
 
@@ -445,14 +686,25 @@
         headerText.textContent = 'Labels';
         headerText.style.cssText = 'font-size: 11px; font-weight: 500; color: #5f6368; text-transform: uppercase; letter-spacing: 0.8px;';
 
+        const buttonGroup = document.createElement('div');
+        buttonGroup.style.cssText = 'display: flex; gap: 4px;';
+
+        const importButton = document.createElement('button');
+        importButton.textContent = '↓';
+        importButton.style.cssText = 'border: none; background: transparent; color: #5f6368; font-size: 14px; cursor: pointer; padding: 0 4px; line-height: 1;';
+        importButton.title = 'Import label';
+        importButton.addEventListener('click', showImportDialog);
+
         const plusButton = document.createElement('button');
         plusButton.textContent = '+';
         plusButton.style.cssText = 'border: none; background: transparent; color: #5f6368; font-size: 18px; cursor: pointer; padding: 0 4px; line-height: 1;';
         plusButton.title = 'Add label';
         plusButton.addEventListener('click', showAddLabelDialog);
 
+        buttonGroup.appendChild(importButton);
+        buttonGroup.appendChild(plusButton);
         headerRow.appendChild(headerText);
-        headerRow.appendChild(plusButton);
+        headerRow.appendChild(buttonGroup);
         labelsSection.appendChild(headerRow);
 
         // Create "No labels" message (indented)
