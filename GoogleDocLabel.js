@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Google Docs Labels
 // @namespace    ThorsAnvil
-// @version      1.1
+// @version      1.2
 // @description  Adds a Labels section to Google Docs left sidebar
 // @author       You
 // @match        https://docs.google.com/document/*
@@ -18,8 +18,10 @@
     function updateLabelsDisplay() {
         if (!labelsListContainer || !noLabelsMessage) return;
 
-        // Clear current list
-        labelsListContainer.innerHTML = '';
+        // Clear current list using DOM methods
+        while (labelsListContainer.firstChild) {
+            labelsListContainer.removeChild(labelsListContainer.firstChild);
+        }
 
         if (labels.length === 0) {
             noLabelsMessage.style.display = 'block';
@@ -28,23 +30,26 @@
             labels.forEach((label, index) => {
                 const labelItem = document.createElement('div');
                 labelItem.style.cssText = 'padding: 4px 16px; color: #202124; font-size: 13px; cursor: pointer; display: flex; align-items: center; justify-content: space-between;';
-                labelItem.innerHTML = `
-                    <span style="flex: 1;">${escapeHtml(label)}</span>
-                    <span class="gd-label-remove" data-index="${index}" style="color: #5f6368; cursor: pointer; padding: 2px 6px; font-size: 11px;">&times;</span>
-                `;
-                labelItem.querySelector('.gd-label-remove').addEventListener('click', (e) => {
+
+                const labelText = document.createElement('span');
+                labelText.style.cssText = 'flex: 1;';
+                labelText.textContent = label;
+
+                const removeBtn = document.createElement('span');
+                removeBtn.className = 'gd-label-remove';
+                removeBtn.dataset.index = index;
+                removeBtn.style.cssText = 'color: #5f6368; cursor: pointer; padding: 2px 6px; font-size: 11px;';
+                removeBtn.textContent = '×';
+                removeBtn.addEventListener('click', (e) => {
                     e.stopPropagation();
                     removeLabel(index);
                 });
+
+                labelItem.appendChild(labelText);
+                labelItem.appendChild(removeBtn);
                 labelsListContainer.appendChild(labelItem);
             });
         }
-    }
-
-    function escapeHtml(text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
     }
 
     function addLabel(labelText) {
@@ -73,21 +78,42 @@
         const dialog = document.createElement('div');
         dialog.style.cssText = 'background: white; border-radius: 8px; padding: 24px; min-width: 300px; box-shadow: 0 4px 20px rgba(0,0,0,0.3);';
 
-        dialog.innerHTML = `
-            <div style="font-size: 16px; font-weight: 500; color: #202124; margin-bottom: 16px;">Add Label</div>
-            <input type="text" id="gd-label-input" placeholder="Enter label name" style="width: 100%; padding: 10px 12px; border: 1px solid #dadce0; border-radius: 4px; font-size: 14px; box-sizing: border-box; outline: none;">
-            <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 20px;">
-                <button id="gd-label-cancel" style="padding: 8px 16px; border: none; background: transparent; color: #1a73e8; font-size: 14px; font-weight: 500; cursor: pointer; border-radius: 4px;">Cancel</button>
-                <button id="gd-label-add" style="padding: 8px 16px; border: none; background: #1a73e8; color: white; font-size: 14px; font-weight: 500; cursor: pointer; border-radius: 4px;">Add</button>
-            </div>
-        `;
+        // Dialog title
+        const title = document.createElement('div');
+        title.style.cssText = 'font-size: 16px; font-weight: 500; color: #202124; margin-bottom: 16px;';
+        title.textContent = 'Add Label';
 
+        // Input field
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.id = 'gd-label-input';
+        input.placeholder = 'Enter label name';
+        input.style.cssText = 'width: 100%; padding: 10px 12px; border: 1px solid #dadce0; border-radius: 4px; font-size: 14px; box-sizing: border-box; outline: none;';
+
+        // Button container
+        const buttonContainer = document.createElement('div');
+        buttonContainer.style.cssText = 'display: flex; justify-content: flex-end; gap: 12px; margin-top: 20px;';
+
+        // Cancel button
+        const cancelBtn = document.createElement('button');
+        cancelBtn.id = 'gd-label-cancel';
+        cancelBtn.textContent = 'Cancel';
+        cancelBtn.style.cssText = 'padding: 8px 16px; border: none; background: transparent; color: #1a73e8; font-size: 14px; font-weight: 500; cursor: pointer; border-radius: 4px;';
+
+        // Add button
+        const addBtn = document.createElement('button');
+        addBtn.id = 'gd-label-add';
+        addBtn.textContent = 'Add';
+        addBtn.style.cssText = 'padding: 8px 16px; border: none; background: #1a73e8; color: white; font-size: 14px; font-weight: 500; cursor: pointer; border-radius: 4px;';
+
+        // Assemble dialog
+        buttonContainer.appendChild(cancelBtn);
+        buttonContainer.appendChild(addBtn);
+        dialog.appendChild(title);
+        dialog.appendChild(input);
+        dialog.appendChild(buttonContainer);
         overlay.appendChild(dialog);
         document.body.appendChild(overlay);
-
-        const input = dialog.querySelector('#gd-label-input');
-        const cancelBtn = dialog.querySelector('#gd-label-cancel');
-        const addBtn = dialog.querySelector('#gd-label-add');
 
         // Focus input
         setTimeout(() => input.focus(), 100);
