@@ -18,6 +18,7 @@
     let documentId = null;
     let documentTitle = null;
     let expandedLabels = {}; // Track which labels are expanded
+    let lastKnownLabelsJson = ''; // Track labels to detect changes
 
     // Extract document ID from URL
     function getDocumentId() {
@@ -60,6 +61,7 @@
                 url: window.location.href
             };
             localStorage.setItem(getStorageKey(), JSON.stringify(data));
+            lastKnownLabelsJson = JSON.stringify(labels);
         } catch (e) {
             console.log('Google Docs Labels: Could not save labels', e);
         }
@@ -79,9 +81,37 @@
                     labels = data.labels || [];
                 }
             }
+            lastKnownLabelsJson = JSON.stringify(labels);
         } catch (e) {
             console.log('Google Docs Labels: Could not load labels', e);
             labels = [];
+            lastKnownLabelsJson = '[]';
+        }
+    }
+
+    // Check if labels have changed and reload if needed
+    function checkAndReloadLabels() {
+        if (!documentId) return;
+        try {
+            const saved = localStorage.getItem(getStorageKey());
+            let currentLabels = [];
+            if (saved) {
+                const data = JSON.parse(saved);
+                if (Array.isArray(data)) {
+                    currentLabels = data;
+                } else {
+                    currentLabels = data.labels || [];
+                }
+            }
+            const currentJson = JSON.stringify(currentLabels);
+            if (currentJson !== lastKnownLabelsJson) {
+                labels = currentLabels;
+                lastKnownLabelsJson = currentJson;
+                updateLabelsDisplay();
+                console.log('Google Docs Labels: Labels reloaded due to external change');
+            }
+        } catch (e) {
+            console.log('Google Docs Labels: Error checking for label changes', e);
         }
     }
 
@@ -731,6 +761,18 @@
             documentTitle = getDocumentTitle();
             saveLabels();
         }, 2000);
+
+        // Listen for visibility changes (tab switching)
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') {
+                checkAndReloadLabels();
+            }
+        });
+
+        // Listen for window focus (window switching)
+        window.addEventListener('focus', () => {
+            checkAndReloadLabels();
+        });
 
         console.log('Google Docs Labels: Labels section added successfully');
     }
