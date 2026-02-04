@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Google Docs Labels
 // @namespace    ThorsAnvil
-// @version      1.2
+// @version      1.3
 // @description  Adds a Labels section to Google Docs left sidebar
 // @author       You
 // @match        https://docs.google.com/document/*
@@ -14,6 +14,7 @@
     let labels = [];
     let labelsListContainer = null;
     let noLabelsMessage = null;
+    let draggedIndex = null;
 
     function updateLabelsDisplay() {
         if (!labelsListContainer || !noLabelsMessage) return;
@@ -29,7 +30,72 @@
             noLabelsMessage.style.display = 'none';
             labels.forEach((label, index) => {
                 const labelItem = document.createElement('div');
-                labelItem.style.cssText = 'padding: 4px 16px; color: #202124; font-size: 13px; cursor: pointer; display: flex; align-items: center; justify-content: space-between;';
+                labelItem.style.cssText = 'padding: 4px 16px; color: #202124; font-size: 13px; cursor: grab; display: flex; align-items: center; justify-content: space-between; border-radius: 4px; transition: background-color 0.15s;';
+                labelItem.draggable = true;
+                labelItem.dataset.index = index;
+
+                // Drag events
+                labelItem.addEventListener('dragstart', (e) => {
+                    draggedIndex = index;
+                    labelItem.style.opacity = '0.5';
+                    e.dataTransfer.effectAllowed = 'move';
+                });
+
+                labelItem.addEventListener('dragend', () => {
+                    labelItem.style.opacity = '1';
+                    draggedIndex = null;
+                    // Remove all drag-over styles
+                    const items = labelsListContainer.querySelectorAll('[draggable="true"]');
+                    items.forEach(item => {
+                        item.style.borderTop = 'none';
+                        item.style.borderBottom = 'none';
+                    });
+                });
+
+                labelItem.addEventListener('dragover', (e) => {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'move';
+                    
+                    // Visual feedback
+                    const items = labelsListContainer.querySelectorAll('[draggable="true"]');
+                    items.forEach(item => {
+                        item.style.borderTop = 'none';
+                        item.style.borderBottom = 'none';
+                    });
+                    
+                    const targetIndex = parseInt(labelItem.dataset.index);
+                    if (draggedIndex !== null && targetIndex !== draggedIndex) {
+                        if (targetIndex < draggedIndex) {
+                            labelItem.style.borderTop = '2px solid #1a73e8';
+                        } else {
+                            labelItem.style.borderBottom = '2px solid #1a73e8';
+                        }
+                    }
+                });
+
+                labelItem.addEventListener('drop', (e) => {
+                    e.preventDefault();
+                    const targetIndex = parseInt(labelItem.dataset.index);
+                    if (draggedIndex !== null && targetIndex !== draggedIndex) {
+                        // Reorder the labels array
+                        const draggedLabel = labels[draggedIndex];
+                        labels.splice(draggedIndex, 1);
+                        labels.splice(targetIndex, 0, draggedLabel);
+                        updateLabelsDisplay();
+                    }
+                });
+
+                // Hover effect
+                labelItem.addEventListener('mouseenter', () => {
+                    labelItem.style.backgroundColor = '#f1f3f4';
+                });
+                labelItem.addEventListener('mouseleave', () => {
+                    labelItem.style.backgroundColor = 'transparent';
+                });
+
+                const dragHandle = document.createElement('span');
+                dragHandle.style.cssText = 'color: #9aa0a6; margin-right: 8px; cursor: grab; font-size: 10px;';
+                dragHandle.textContent = '⋮⋮';
 
                 const labelText = document.createElement('span');
                 labelText.style.cssText = 'flex: 1;';
@@ -45,6 +111,7 @@
                     removeLabel(index);
                 });
 
+                labelItem.appendChild(dragHandle);
                 labelItem.appendChild(labelText);
                 labelItem.appendChild(removeBtn);
                 labelsListContainer.appendChild(labelItem);
@@ -183,15 +250,16 @@
         headerRow.appendChild(plusButton);
         labelsSection.appendChild(headerRow);
 
-        // Create "No labels" message
+        // Create "No labels" message (indented)
         noLabelsMessage = document.createElement('div');
         noLabelsMessage.textContent = 'No labels';
-        noLabelsMessage.style.cssText = 'padding: 4px 16px; color: #5f6368; font-size: 12px; font-style: italic;';
+        noLabelsMessage.style.cssText = 'padding: 4px 16px 4px 32px; color: #5f6368; font-size: 12px; font-style: italic;';
         labelsSection.appendChild(noLabelsMessage);
 
-        // Create container for labels list
+        // Create container for labels list (indented)
         labelsListContainer = document.createElement('div');
         labelsListContainer.id = 'gd-labels-list';
+        labelsListContainer.style.cssText = 'padding-left: 16px;';
         labelsSection.appendChild(labelsListContainer);
 
         // Insert before Document tabs
