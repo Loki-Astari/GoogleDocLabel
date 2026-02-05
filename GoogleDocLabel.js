@@ -1,10 +1,11 @@
 // ==UserScript==
 // @name         Google Docs Labels
 // @namespace    ThorsAnvil
-// @version      1.6
+// @version      1.7
 // @description  Adds a Labels section to Google Docs left sidebar
 // @author       You
 // @match        https://docs.google.com/document/*
+// @match        *://labels.mine/*
 // @grant        none
 // ==/UserScript==
 
@@ -19,6 +20,11 @@
     let documentTitle = null;
     let expandedLabels = {}; // Track which labels are expanded
     let lastKnownLabelsJson = ''; // Track labels to detect changes
+
+    // Check if we're on the labels.mine page
+    function isLabelsPage() {
+        return window.location.hostname === 'labels.mine';
+    }
 
     // Extract document ID from URL
     function getDocumentId() {
@@ -777,6 +783,201 @@
         console.log('Google Docs Labels: Labels section added successfully');
     }
 
+    // Get all labels from localStorage
+    function getAllLabels() {
+        const allLabels = {};
+
+        for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (key && key.startsWith('gd-labels-')) {
+                try {
+                    const docId = key.replace('gd-labels-', '');
+                    const saved = localStorage.getItem(key);
+                    const data = JSON.parse(saved);
+                    
+                    let docLabels = [];
+                    let docTitle = 'Untitled';
+                    let docUrl = 'https://docs.google.com/document/d/' + docId + '/edit';
+
+                    if (Array.isArray(data)) {
+                        docLabels = data;
+                    } else {
+                        docLabels = data.labels || [];
+                        docTitle = data.title || 'Untitled';
+                        docUrl = data.url || docUrl;
+                    }
+
+                    docLabels.forEach(label => {
+                        if (!allLabels[label]) {
+                            allLabels[label] = [];
+                        }
+                        allLabels[label].push({
+                            id: docId,
+                            title: docTitle,
+                            url: docUrl
+                        });
+                    });
+                } catch (e) {
+                    // Skip invalid entries
+                }
+            }
+        }
+
+        return allLabels;
+    }
+
+    // Create the labels.mine page
+    function createLabelsPage() {
+        // Clear existing page content
+        document.documentElement.innerHTML = '';
+        
+        const allLabels = getAllLabels();
+        const labelNames = Object.keys(allLabels).sort();
+
+        // Build the page
+        const html = `
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Labels</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #fff;
+            color: #202124;
+            padding: 40px 20px;
+            max-width: 600px;
+            margin: 0 auto;
+            line-height: 1.5;
+        }
+        h1 {
+            font-size: 24px;
+            font-weight: 400;
+            margin-bottom: 24px;
+            color: #202124;
+        }
+        .label-item {
+            border-bottom: 1px solid #e8eaed;
+            padding: 12px 0;
+        }
+        .label-item:last-child {
+            border-bottom: none;
+        }
+        .label-header {
+            display: flex;
+            align-items: center;
+            cursor: pointer;
+            padding: 4px 0;
+        }
+        .label-header:hover {
+            color: #1a73e8;
+        }
+        .expand-icon {
+            width: 20px;
+            color: #5f6368;
+            font-size: 10px;
+            transition: transform 0.15s;
+        }
+        .expand-icon.expanded {
+            transform: rotate(90deg);
+        }
+        .label-name {
+            flex: 1;
+            font-size: 15px;
+        }
+        .label-count {
+            color: #5f6368;
+            font-size: 13px;
+        }
+        .doc-list {
+            display: none;
+            padding: 8px 0 8px 20px;
+        }
+        .doc-list.expanded {
+            display: block;
+        }
+        .doc-link {
+            display: block;
+            color: #1a73e8;
+            text-decoration: none;
+            padding: 6px 0;
+            font-size: 14px;
+        }
+        .doc-link:hover {
+            text-decoration: underline;
+        }
+        .empty {
+            color: #5f6368;
+            font-style: italic;
+        }
+    </style>
+</head>
+<body>
+    <h1>Labels</h1>
+    <div id="labels-container"></div>
+</body>
+</html>`;
+
+        document.write(html);
+        document.close();
+
+        const container = document.getElementById('labels-container');
+
+        if (labelNames.length === 0) {
+            container.innerHTML = '<p class="empty">No labels yet.</p>';
+            return;
+        }
+
+        labelNames.forEach(labelName => {
+            const docs = allLabels[labelName];
+            
+            const item = document.createElement('div');
+            item.className = 'label-item';
+
+            const header = document.createElement('div');
+            header.className = 'label-header';
+
+            const expandIcon = document.createElement('span');
+            expandIcon.className = 'expand-icon';
+            expandIcon.textContent = '▶';
+
+            const name = document.createElement('span');
+            name.className = 'label-name';
+            name.textContent = labelName;
+
+            const count = document.createElement('span');
+            count.className = 'label-count';
+            count.textContent = docs.length;
+
+            header.appendChild(expandIcon);
+            header.appendChild(name);
+            header.appendChild(count);
+
+            const docList = document.createElement('div');
+            docList.className = 'doc-list';
+
+            docs.forEach(doc => {
+                const link = document.createElement('a');
+                link.className = 'doc-link';
+                link.href = doc.url;
+                link.textContent = doc.title;
+                docList.appendChild(link);
+            });
+
+            header.addEventListener('click', () => {
+                expandIcon.classList.toggle('expanded');
+                docList.classList.toggle('expanded');
+            });
+
+            item.appendChild(header);
+            item.appendChild(docList);
+            container.appendChild(item);
+        });
+    }
+
     function init() {
         // Get document ID first
         documentId = getDocumentId();
@@ -819,9 +1020,20 @@
         setTimeout(() => observer.disconnect(), 30000);
     }
 
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', init);
+    // Main entry point
+    if (isLabelsPage()) {
+        // On labels.mine - show the labels page
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', createLabelsPage);
+        } else {
+            createLabelsPage();
+        }
     } else {
-        init();
+        // On Google Docs - show the sidebar
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', init);
+        } else {
+            init();
+        }
     }
 })();
