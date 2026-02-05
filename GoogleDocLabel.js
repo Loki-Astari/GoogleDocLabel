@@ -5,7 +5,6 @@
 // @description  Adds a Labels section to Google Docs left sidebar
 // @author       You
 // @match        https://docs.google.com/document/*
-// @match        *://labels.mine/*
 // @grant        none
 // ==/UserScript==
 
@@ -21,9 +20,9 @@
     let expandedLabels = {}; // Track which labels are expanded
     let lastKnownLabelsJson = ''; // Track labels to detect changes
 
-    // Check if we're on the labels.mine page
+    // Check if we're on the labels page (docs.google.com/document/d/labels)
     function isLabelsPage() {
-        return window.location.hostname === 'labels.mine';
+        return window.location.pathname.startsWith('/document/d/labels');
     }
 
     // Extract document ID from URL
@@ -826,10 +825,10 @@
         return allLabels;
     }
 
-    // Create the labels.mine page
+    // Create the labels page
     function createLabelsPage() {
-        // Clear existing page content
-        document.documentElement.innerHTML = '';
+        // Stop any further loading and clear the page
+        window.stop();
         
         const allLabels = getAllLabels();
         const labelNames = Object.keys(allLabels).sort();
@@ -1022,12 +1021,8 @@
 
     // Main entry point
     if (isLabelsPage()) {
-        // On labels.mine - show the labels page
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', createLabelsPage);
-        } else {
-            createLabelsPage();
-        }
+        // On labels page - take over immediately
+        createLabelsPage();
     } else {
         // On Google Docs - show the sidebar
         if (document.readyState === 'loading') {
