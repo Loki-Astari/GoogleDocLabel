@@ -1041,7 +1041,6 @@
                 empty.textContent = 'No labels yet. Add labels to your Google Docs to see them here.';
                 empty.style.cssText = 'color:#5f6368;font-style:italic;padding:24px;text-align:center;font-size:14px;';
                 bodyEl.appendChild(empty);
-                return;
             }
 
             var grouped = getGrouped();
