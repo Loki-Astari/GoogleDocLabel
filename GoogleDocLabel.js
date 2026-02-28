@@ -5,7 +5,9 @@
 // @description  Adds a Labels section to Google Docs left sidebar
 // @author       You
 // @match        https://docs.google.com/document/*
-// @grant        none
+// @match        https://drive.google.com/*
+// @grant        GM_getValue
+// @grant        GM_setValue
 // ==/UserScript==
 
 (function() {
@@ -19,11 +21,6 @@
     let documentTitle = null;
     let expandedLabels = {}; // Track which labels are expanded
     let lastKnownLabelsJson = ''; // Track labels to detect changes
-
-    // Check if we're on the labels page (docs.google.com/document/d/labels)
-    function isLabelsPage() {
-        return window.location.pathname.startsWith('/document/d/labels');
-    }
 
     // Extract document ID from URL
     function getDocumentId() {
@@ -56,6 +53,36 @@
         return 'gd-labels-' + (docId || documentId);
     }
 
+    // Update master label data for the current document only
+    function updateMasterLabelList() {
+        if (!documentId) return;
+        try {
+            var master = GM_getValue('gd-master-labels', {});
+            if (Array.isArray(master)) master = {};
+
+            var docTitle = getDocumentTitle();
+            var docUrl = window.location.href;
+
+            // Remove this document from all labels
+            Object.keys(master).forEach(function(label) {
+                master[label] = master[label].filter(function(doc) {
+                    return doc.id !== documentId;
+                });
+                if (master[label].length === 0) delete master[label];
+            });
+
+            // Add this document's current labels
+            labels.forEach(function(label) {
+                if (!master[label]) master[label] = [];
+                master[label].push({ id: documentId, title: docTitle, url: docUrl });
+            });
+
+            GM_setValue('gd-master-labels', master);
+        } catch (e) {
+            console.log('Google Docs Labels: Could not update master label list', e);
+        }
+    }
+
     // Save labels to localStorage (with document title)
     function saveLabels() {
         if (!documentId) return;
@@ -67,6 +94,7 @@
             };
             localStorage.setItem(getStorageKey(), JSON.stringify(data));
             lastKnownLabelsJson = JSON.stringify(labels);
+            updateMasterLabelList();
         } catch (e) {
             console.log('Google Docs Labels: Could not save labels', e);
         }
@@ -132,7 +160,7 @@
                     const docId = key.replace('gd-labels-', '');
                     const saved = localStorage.getItem(key);
                     const data = JSON.parse(saved);
-                    
+
                     let docLabels = [];
                     let docTitle = 'Untitled';
                     let docUrl = 'https://docs.google.com/document/d/' + docId + '/edit';
@@ -180,7 +208,7 @@
     function importLabel(jsonString) {
         try {
             const importData = JSON.parse(jsonString);
-            
+
             if (!importData.label || !Array.isArray(importData.documents)) {
                 return { success: false, message: 'Invalid JSON format. Expected { label, documents }' };
             }
@@ -223,10 +251,11 @@
             // Reload current document's labels if it was affected
             loadLabels();
             updateLabelsDisplay();
+            updateMasterLabelList();
 
-            return { 
-                success: true, 
-                message: `Imported label "${labelName}" to ${importedCount} document(s).` 
+            return {
+                success: true,
+                message: `Imported label "${labelName}" to ${importedCount} document(s).`
             };
         } catch (e) {
             return { success: false, message: 'Invalid JSON: ' + e.message };
@@ -428,14 +457,14 @@
                 labelItem.addEventListener('dragover', (e) => {
                     e.preventDefault();
                     e.dataTransfer.dropEffect = 'move';
-                    
+
                     // Visual feedback
                     const items = labelsListContainer.querySelectorAll('[draggable="true"]');
                     items.forEach(item => {
                         item.style.borderTop = 'none';
                         item.style.borderBottom = 'none';
                     });
-                    
+
                     const targetIndex = parseInt(labelItem.dataset.index);
                     if (draggedIndex !== null && targetIndex !== draggedIndex) {
                         if (targetIndex < draggedIndex) {
@@ -528,10 +557,10 @@
                     e.stopPropagation();
                     expandedLabels[label] = !expandedLabels[label];
                     const nowExpanded = expandedLabels[label];
-                    
+
                     expandBtn.style.transform = nowExpanded ? 'rotate(90deg)' : 'rotate(0deg)';
                     docListContainer.style.display = nowExpanded ? 'block' : 'none';
-                    
+
                     if (nowExpanded) {
                         populateDocumentList(docListContainer, label);
                     } else {
@@ -782,201 +811,6 @@
         console.log('Google Docs Labels: Labels section added successfully');
     }
 
-    // Get all labels from localStorage
-    function getAllLabels() {
-        const allLabels = {};
-
-        for (let i = 0; i < localStorage.length; i++) {
-            const key = localStorage.key(i);
-            if (key && key.startsWith('gd-labels-')) {
-                try {
-                    const docId = key.replace('gd-labels-', '');
-                    const saved = localStorage.getItem(key);
-                    const data = JSON.parse(saved);
-                    
-                    let docLabels = [];
-                    let docTitle = 'Untitled';
-                    let docUrl = 'https://docs.google.com/document/d/' + docId + '/edit';
-
-                    if (Array.isArray(data)) {
-                        docLabels = data;
-                    } else {
-                        docLabels = data.labels || [];
-                        docTitle = data.title || 'Untitled';
-                        docUrl = data.url || docUrl;
-                    }
-
-                    docLabels.forEach(label => {
-                        if (!allLabels[label]) {
-                            allLabels[label] = [];
-                        }
-                        allLabels[label].push({
-                            id: docId,
-                            title: docTitle,
-                            url: docUrl
-                        });
-                    });
-                } catch (e) {
-                    // Skip invalid entries
-                }
-            }
-        }
-
-        return allLabels;
-    }
-
-    // Create the labels page
-    function createLabelsPage() {
-        // Stop any further loading and clear the page
-        window.stop();
-        
-        const allLabels = getAllLabels();
-        const labelNames = Object.keys(allLabels).sort();
-
-        // Build the page
-        const html = `
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Labels</title>
-    <style>
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            background: #fff;
-            color: #202124;
-            padding: 40px 20px;
-            max-width: 600px;
-            margin: 0 auto;
-            line-height: 1.5;
-        }
-        h1 {
-            font-size: 24px;
-            font-weight: 400;
-            margin-bottom: 24px;
-            color: #202124;
-        }
-        .label-item {
-            border-bottom: 1px solid #e8eaed;
-            padding: 12px 0;
-        }
-        .label-item:last-child {
-            border-bottom: none;
-        }
-        .label-header {
-            display: flex;
-            align-items: center;
-            cursor: pointer;
-            padding: 4px 0;
-        }
-        .label-header:hover {
-            color: #1a73e8;
-        }
-        .expand-icon {
-            width: 20px;
-            color: #5f6368;
-            font-size: 10px;
-            transition: transform 0.15s;
-        }
-        .expand-icon.expanded {
-            transform: rotate(90deg);
-        }
-        .label-name {
-            flex: 1;
-            font-size: 15px;
-        }
-        .label-count {
-            color: #5f6368;
-            font-size: 13px;
-        }
-        .doc-list {
-            display: none;
-            padding: 8px 0 8px 20px;
-        }
-        .doc-list.expanded {
-            display: block;
-        }
-        .doc-link {
-            display: block;
-            color: #1a73e8;
-            text-decoration: none;
-            padding: 6px 0;
-            font-size: 14px;
-        }
-        .doc-link:hover {
-            text-decoration: underline;
-        }
-        .empty {
-            color: #5f6368;
-            font-style: italic;
-        }
-    </style>
-</head>
-<body>
-    <h1>Labels</h1>
-    <div id="labels-container"></div>
-</body>
-</html>`;
-
-        document.write(html);
-        document.close();
-
-        const container = document.getElementById('labels-container');
-
-        if (labelNames.length === 0) {
-            container.innerHTML = '<p class="empty">No labels yet.</p>';
-            return;
-        }
-
-        labelNames.forEach(labelName => {
-            const docs = allLabels[labelName];
-            
-            const item = document.createElement('div');
-            item.className = 'label-item';
-
-            const header = document.createElement('div');
-            header.className = 'label-header';
-
-            const expandIcon = document.createElement('span');
-            expandIcon.className = 'expand-icon';
-            expandIcon.textContent = '▶';
-
-            const name = document.createElement('span');
-            name.className = 'label-name';
-            name.textContent = labelName;
-
-            const count = document.createElement('span');
-            count.className = 'label-count';
-            count.textContent = docs.length;
-
-            header.appendChild(expandIcon);
-            header.appendChild(name);
-            header.appendChild(count);
-
-            const docList = document.createElement('div');
-            docList.className = 'doc-list';
-
-            docs.forEach(doc => {
-                const link = document.createElement('a');
-                link.className = 'doc-link';
-                link.href = doc.url;
-                link.textContent = doc.title;
-                docList.appendChild(link);
-            });
-
-            header.addEventListener('click', () => {
-                expandIcon.classList.toggle('expanded');
-                docList.classList.toggle('expanded');
-            });
-
-            item.appendChild(header);
-            item.appendChild(docList);
-            container.appendChild(item);
-        });
-    }
-
     function init() {
         // Get document ID first
         documentId = getDocumentId();
@@ -984,6 +818,8 @@
             console.log('Google Docs Labels: Could not determine document ID');
             return;
         }
+
+        updateMasterLabelList();
 
         const observer = new MutationObserver((mutations, obs) => {
             const walker = document.createTreeWalker(
@@ -1019,12 +855,213 @@
         setTimeout(() => observer.disconnect(), 30000);
     }
 
-    // Main entry point
-    if (isLabelsPage()) {
-        // On labels page - take over immediately
-        createLabelsPage();
+    // --- Google Drive integration ---
+
+    function isGoogleDrive() {
+        return window.location.hostname === 'drive.google.com';
+    }
+
+    function showDriveLabelsOverlay() {
+        var existing = document.querySelector('#gd-labels-overlay');
+        if (existing) { existing.remove(); return; }
+
+        var masterData = GM_getValue('gd-master-labels', {});
+        // Handle legacy format (array of strings)
+        if (Array.isArray(masterData)) {
+            var converted = {};
+            masterData.forEach(function(l) { converted[l] = []; });
+            masterData = converted;
+        }
+        var labelNames = Object.keys(masterData).sort();
+
+        var overlay = document.createElement('div');
+        overlay.id = 'gd-labels-overlay';
+        overlay.style.cssText = 'position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 10000; display: flex; align-items: center; justify-content: center;';
+
+        var panel = document.createElement('div');
+        panel.style.cssText = 'background: #fff; border-radius: 12px; padding: 0; min-width: 420px; max-width: 560px; max-height: 80vh; display: flex; flex-direction: column; box-shadow: 0 8px 32px rgba(0,0,0,0.3);';
+
+        var header = document.createElement('div');
+        header.style.cssText = 'display: flex; align-items: center; justify-content: space-between; padding: 20px 24px 16px; border-bottom: 1px solid #e8eaed; flex-shrink: 0;';
+
+        var title = document.createElement('h2');
+        title.textContent = 'Labels';
+        title.style.cssText = 'font-size: 20px; font-weight: 400; color: #202124; margin: 0; font-family: "Google Sans", Roboto, sans-serif;';
+
+        var closeBtn = document.createElement('button');
+        closeBtn.textContent = '\u00D7';
+        closeBtn.style.cssText = 'border: none; background: transparent; font-size: 24px; cursor: pointer; color: #5f6368; padding: 4px 8px; border-radius: 50%; line-height: 1;';
+        closeBtn.addEventListener('mouseenter', function() { closeBtn.style.background = '#f1f3f4'; });
+        closeBtn.addEventListener('mouseleave', function() { closeBtn.style.background = 'transparent'; });
+        closeBtn.addEventListener('click', function() { overlay.remove(); });
+
+        header.appendChild(title);
+        header.appendChild(closeBtn);
+        panel.appendChild(header);
+
+        var body = document.createElement('div');
+        body.style.cssText = 'overflow-y: auto; padding: 8px 0;';
+
+        if (labelNames.length === 0) {
+            var empty = document.createElement('div');
+            empty.textContent = 'No labels yet. Add labels to your Google Docs to see them here.';
+            empty.style.cssText = 'color: #5f6368; font-style: italic; padding: 24px; text-align: center; font-size: 14px;';
+            body.appendChild(empty);
+        } else {
+            labelNames.forEach(function(labelName) {
+                var docs = masterData[labelName] || [];
+
+                var container = document.createElement('div');
+
+                var item = document.createElement('div');
+                item.style.cssText = 'padding: 10px 24px; font-size: 14px; color: #202124; cursor: pointer; display: flex; align-items: center; transition: background 0.1s; user-select: none;';
+                item.addEventListener('mouseenter', function() { item.style.background = '#f1f3f4'; });
+                item.addEventListener('mouseleave', function() { item.style.background = 'transparent'; });
+
+                var expandIcon = document.createElement('span');
+                expandIcon.textContent = '\u25B6';
+                expandIcon.style.cssText = 'font-size: 10px; color: #5f6368; margin-right: 10px; transition: transform 0.15s; display: inline-block;';
+
+                var icon = document.createElement('span');
+                icon.style.cssText = 'margin-right: 10px; color: #5f6368; display: flex; align-items: center;';
+                icon.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24"><path d="M17.63 5.84C17.27 5.33 16.67 5 16 5L5 5.01C3.9 5.01 3 5.9 3 7v10c0 1.1.9 1.99 2 1.99L16 19c.67 0 1.27-.33 1.63-.84L22 12l-4.37-6.16z" fill="currentColor"/></svg>';
+
+                var text = document.createElement('span');
+                text.style.cssText = 'flex: 1;';
+                text.textContent = labelName;
+
+                var count = document.createElement('span');
+                count.style.cssText = 'color: #5f6368; font-size: 12px; margin-left: 8px;';
+                count.textContent = docs.length + (docs.length === 1 ? ' doc' : ' docs');
+
+                item.appendChild(expandIcon);
+                item.appendChild(icon);
+                item.appendChild(text);
+                item.appendChild(count);
+                container.appendChild(item);
+
+                var docList = document.createElement('div');
+                docList.style.cssText = 'display: none; padding: 2px 0 8px 52px;';
+
+                if (docs.length === 0) {
+                    var emptyMsg = document.createElement('div');
+                    emptyMsg.textContent = 'No documents';
+                    emptyMsg.style.cssText = 'color: #5f6368; font-size: 13px; font-style: italic; padding: 4px 0;';
+                    docList.appendChild(emptyMsg);
+                } else {
+                    docs.forEach(function(doc) {
+                        var link = document.createElement('a');
+                        link.href = doc.url;
+                        link.textContent = doc.title;
+                        link.style.cssText = 'display: block; color: #1a73e8; text-decoration: none; padding: 5px 0; font-size: 13px;';
+                        link.addEventListener('mouseenter', function() { link.style.textDecoration = 'underline'; });
+                        link.addEventListener('mouseleave', function() { link.style.textDecoration = 'none'; });
+                        docList.appendChild(link);
+                    });
+                }
+
+                container.appendChild(docList);
+
+                var expanded = false;
+                item.addEventListener('click', function() {
+                    expanded = !expanded;
+                    docList.style.display = expanded ? 'block' : 'none';
+                    expandIcon.style.transform = expanded ? 'rotate(90deg)' : 'rotate(0deg)';
+                });
+
+                body.appendChild(container);
+            });
+        }
+
+        panel.appendChild(body);
+        overlay.appendChild(panel);
+
+        overlay.addEventListener('click', function(e) { if (e.target === overlay) overlay.remove(); });
+        document.addEventListener('keydown', function handler(e) {
+            if (e.key === 'Escape') { overlay.remove(); document.removeEventListener('keydown', handler); }
+        });
+
+        document.body.appendChild(overlay);
+    }
+
+    function createDriveLabelItem(starredNavTreeHeader) {
+        if (document.querySelector('#gd-drive-label-item')) return;
+
+        const labelItem = starredNavTreeHeader.cloneNode(true);
+        labelItem.id = 'gd-drive-label-item';
+
+        const textNodes = [];
+        const walker = document.createTreeWalker(labelItem, NodeFilter.SHOW_TEXT, null, false);
+        let tNode;
+        while (tNode = walker.nextNode()) {
+            if (tNode.textContent.trim().length > 0) {
+                textNodes.push(tNode);
+            }
+        }
+        if (textNodes.length > 0) {
+            textNodes[0].textContent = 'Labels';
+        }
+
+        const svgEl = labelItem.querySelector('svg');
+        if (svgEl) {
+            svgEl.innerHTML = '<path d="M17.63 5.84C17.27 5.33 16.67 5 16 5L5 5.01C3.9 5.01 3 5.9 3 7v10c0 1.1.9 1.99 2 1.99L16 19c.67 0 1.27-.33 1.63-.84L22 12l-4.37-6.16z" fill="currentColor"/>';
+        }
+
+        labelItem.querySelectorAll('[aria-selected="true"]').forEach(el => el.setAttribute('aria-selected', 'false'));
+
+        labelItem.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            showDriveLabelsOverlay();
+        });
+
+        starredNavTreeHeader.parentNode.insertBefore(labelItem, starredNavTreeHeader.nextSibling);
+        console.log('Google Docs Labels: Added Labels item to Google Drive sidebar');
+    }
+
+    function findStarredNavTreeHeader() {
+        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null, false);
+        let node;
+        while (node = walker.nextNode()) {
+            if (node.textContent.trim() === 'Starred') {
+                let container = node.parentElement;
+                while (container && container !== document.body) {
+                    if (container.getAttribute('aria-labelledby') === 'navTreeHeader') {
+                        return container;
+                    }
+                    container = container.parentElement;
+                }
+            }
+        }
+        return null;
+    }
+
+    function initDrive() {
+        // Keep re-injecting whenever Drive removes our item
+        const observer = new MutationObserver(() => {
+            if (!document.querySelector('#gd-drive-label-item')) {
+                const starred = findStarredNavTreeHeader();
+                if (starred) {
+                    createDriveLabelItem(starred);
+                }
+            }
+        });
+
+        observer.observe(document.body, {
+            childList: true,
+            subtree: true
+        });
+    }
+
+    // --- Main entry point ---
+
+    if (isGoogleDrive()) {
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', initDrive);
+        } else {
+            initDrive();
+        }
     } else {
-        // On Google Docs - show the sidebar
         if (document.readyState === 'loading') {
             document.addEventListener('DOMContentLoaded', init);
         } else {
